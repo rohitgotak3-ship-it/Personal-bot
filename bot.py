@@ -1,250 +1,509 @@
+import os, json, asyncio, re
+from pathlib import Path
+from datetime import datetime
 import discord
 from discord import app_commands
 from discord.ext import commands
-import json, os, random
-from pathlib import Path
 
-BOT_TOKEN = os.getenv('DISCORD_TOKEN', 'PUT_YOUR_BOT_TOKEN_HERE')
-OWNER_ID = 1433457392917676138
+TOKEN = os.getenv('DISCORD_TOKEN', '').strip()
+MASTER_ID = 1433457392917676138
+SERVER_ID = 1552614362701627432
+DEFAULT_ANNOUNCEMENT_CHANNEL = 1552615643210322000
+DEFAULT_INFO_CHANNEL = 1552616143158780004
+DEFAULT_RULES_CHANNEL = 1552617506923880449
+DEFAULT_CHAT_CHANNEL = 1552626851145584640
+DEFAULT_VERIFY_CHANNEL = 1552662728244592763
 DATA_FILE = Path('lightness_data.json')
-ACCESS_FILE = Path('main_dashboard_access.json')
 
-E = {
-    'crown':'<a:BS_crown:1549137817341268058>',
-    'fire':'<a:Fire:1549138871537639507>',
-    'diamond':'<a:diomond:1549139140803563644>',
-    'arrow':'<a:Arrow_White:1549136782971379712>',
-    'verify':'<a:INFAMOUS_Verify:1549136346902175754>',
-    'bot':'<a:bot:1549139254712606830>',
-    'star':'<a:star:1529777112796631141>',
-    'purple':'<a:purple:1529777102100889602>',
-    'ticket':'<a:ticket:1549136416250921060>',
-}
+if DATA_FILE.exists():
+    try: DATA = json.loads(DATA_FILE.read_text())
+    except Exception: DATA = {}
+else: DATA = {}
+DATA.setdefault('users', [])
+DATA.setdefault('roles', [])
+DATA.setdefault('verify_role', 0)
+DATA.setdefault('announcement', {'title':'', 'description':'', 'image':'', 'channel':DEFAULT_ANNOUNCEMENT_CHANNEL})
+DATA.setdefault('welcome', {'enabled':False,'channel':0,'title':'🩸 𝐈𝐍𝐃𝐈𝐀𝐍 𝐁𝐋𝐎𝐎𝐃 𝐌𝐎𝐎𝐍 𝐒𝟏 🩸','description':'<a:BS_crown:1549137817341268058> **𝐖𝐄𝐋𝐂𝐎𝐌𝐄 {user_mention}!**\n<a:Fire:1549138871537639507> **𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 {server_name}**','image':''})
+DATA.setdefault('goodbye', {'enabled':False,'channel':0,'title':'𝐆𝐎𝐎𝐃𝐁𝐘𝐄 {user_name}','description':'<a:Fire:1549138871537639507> **𝐖𝐄\'𝐋𝐋 𝐌𝐈𝐒𝐒 𝐘𝐎𝐔!**\n<a:Arrow_White:1549136782971379712> **𝐌𝐄𝐌𝐁𝐄𝐑𝐒 𝐋𝐄𝐅𝐓:** {member_count}','image':''})
+DATA.setdefault('ticket', {'enabled':False,'channel':0,'category':0,'title':'🎫 𝐓𝐈𝐂𝐊𝐄𝐓 𝐒𝐔𝐏𝐏𝐎𝐑𝐓','description':'Open a ticket using the buttons below.','image':'','buttons':[{'label':'BUY','emoji':'🎫','style':'green'},{'label':'REPORT','emoji':'⚠️','style':'red'},{'label':'SUPPORT','emoji':'🛠️','style':'blue'}]})
+DATA.setdefault('op', {'title':'𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 • 𝐎𝐏','message':'','image':'','footer':'𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 𝐎𝐅𝐅𝐈𝐂𝐈𝐀𝐋'})
 
-DEFAULT_DATA = {'guilds': {}}
+def save():
+    DATA_FILE.write_text(json.dumps(DATA, indent=2, ensure_ascii=False))
 
-def load_json(path, default):
-    try:
-        with path.open('r', encoding='utf-8') as f: return json.load(f)
-    except Exception: return default
+def e(name,eid): return f'<a:{name}:{eid}>'
+ARROW=e('Arrow_White',1549136782971379712); CROWN=e('BS_crown',1549137817341268058); BUTTERFLY=e('CH_Butterfly',1549136722686644336); FIRE=e('Fire',1549138871537639507); VERIFY=e('INFAMOUS_Verify',1549136346902175754); ERROR=e('error',1549136020094717982); BOT=e('bot',1549139254712606830); HAMMER=e('hammer_time',1549138507539288126); DIAMOND=e('diomond',1549139140803563644); DOT=e('dot',1549136875283816608)
 
-def save_json(path, data):
-    tmp = path.with_suffix(path.suffix+'.tmp')
-    with tmp.open('w', encoding='utf-8') as f: json.dump(data, f, indent=2, ensure_ascii=False)
-    tmp.replace(path)
+intents=discord.Intents.default(); intents.members=True; intents.guilds=True
+bot=commands.Bot(command_prefix='!', intents=intents)
 
-DATA = load_json(DATA_FILE, DEFAULT_DATA)
-ACCESS = set(int(x) for x in load_json(ACCESS_FILE, []))
+def is_master(i): return i.user.id==MASTER_ID
 
-def guild_cfg(gid):
-    g = DATA.setdefault('guilds', {}).setdefault(str(gid), {})
-    g.setdefault('welcome', {})
-    g.setdefault('goodbye', {})
-    g.setdefault('announcement', {})
-    g.setdefault('ticket', {})
-    g.setdefault('verify', {})
-    return g
+def allowed(uid, interaction):
+    if uid==MASTER_ID: return True
+    if uid in DATA['users']: return True
+    return bool({r.id for r in getattr(interaction.user,'roles',[])} & set(DATA['roles']))
 
-def is_owner(uid): return uid == OWNER_ID
+def render(text, member=None, guild=None):
+    guild=guild or getattr(member,'guild',None)
+    vals={'user_mention':member.mention if member else '', 'display_name':member.display_name if member else '', 'user_name':member.name if member else '', 'user_id':str(member.id) if member else '', 'server_name':guild.name if guild else '', 'server_id':str(guild.id) if guild else '', 'member_count':str(guild.member_count if guild else 0), 'member_count_ordinal':ordinal(guild.member_count if guild else 0), 'join_date':member.joined_at.strftime('%d/%m/%Y %H:%M') if member and member.joined_at else '', 'creation_date':member.created_at.strftime('%d/%m/%Y %H:%M') if member else ''}
+    for k,v in vals.items(): text=text.replace('{'+k+'}',v)
+    return text
 
-def can_dashboard(uid): return is_owner(uid) or uid in ACCESS
+def ordinal(n):
+    if 10<n%100<14: s='th'
+    else: s={1:'st',2:'nd',3:'rd'}.get(n%10,'th')
+    return f'{n}{s}'
 
-async def deny(i):
-    msg = f"{E['verify']} **ACCESS DENIED**\n{E['diamond']} You don't have LIGHTNESS Dashboard access."
-    if i.response.is_done(): await i.followup.send(msg, ephemeral=True)
-    else: await i.response.send_message(msg, ephemeral=True)
+OP_EMOJIS = [
+    '<a:BS_crown:1549137817341268058>', '<a:Fire:1549138871537639507>',
+    '<a:Arrow_White:1549136782971379712>', '<a:INFAMOUS_Verify:1549136346902175754>',
+    '<a:diomond:1549139140803563644>', '<a:bot:1549139254712606830>',
+    '<a:CH_Butterfly:1549136722686644336>', '<a:hammer_time:1549138507539288126>',
+    '<a:error:1549136020094717982>', '<a:dot:1549136875283816608>'
+]
 
-class BaseModal(discord.ui.Modal):
-    pass
+def op_decorate(text):
+    """Turn plain user text into a premium LIGHTNESS OP layout.
+    Existing Discord emoji markup is preserved; decoration is added around meaningful lines.
+    """
+    import random
+    text = str(text or '').strip()
+    if not text:
+        return f'{OP_EMOJIS[0]} **𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 • 𝐎𝐏** {OP_EMOJIS[1]}'
+    lines = text.splitlines()
+    out=[]
+    pool=OP_EMOJIS[:]
+    random.shuffle(pool)
+    idx=0
+    for raw in lines:
+        line=raw.strip()
+        if not line:
+            out.append(''); continue
+        # Preserve existing custom emoji markup but add a different LIGHTNESS emoji too.
+        em=pool[idx % len(pool)]; idx += 1
+        if line.startswith('<a:') or line.startswith('<:'):
+            out.append(f'{em} {line}')
+        else:
+            out.append(f'{em} **{line}**')
+    return '\n'.join(out)
 
-class ChannelMessageModal(discord.ui.Modal):
-    def __init__(self, module):
-        self.module = module
-        super().__init__(title=f'LIGHTNESS • {module.upper()} SETUP')
-        self.channel_id = discord.ui.TextInput(label='Channel ID', placeholder='Paste the channel ID', max_length=20)
-        self.message = discord.ui.TextInput(label='Message', placeholder='Use {user}, {server}, {member_count}', style=discord.TextStyle.paragraph, required=False, max_length=1900)
-        self.add_item(self.channel_id); self.add_item(self.message)
-    async def on_submit(self, i):
-        if not can_dashboard(i.user.id): return await deny(i)
-        try: cid = int(str(self.channel_id.value).strip())
-        except: return await i.response.send_message(f"{E['verify']} Invalid channel ID.", ephemeral=True)
-        ch = i.guild.get_channel(cid)
-        if not isinstance(ch, discord.TextChannel): return await i.response.send_message(f"{E['verify']} Text channel not found.", ephemeral=True)
-        cfg = guild_cfg(i.guild.id)[self.module]
-        cfg.update({'channel_id': cid, 'message': str(self.message.value).strip()})
-        save_json(DATA_FILE, DATA)
-        await i.response.send_message(f"{E['diamond']} **{self.module.title()} saved:** {ch.mention}", ephemeral=True)
+def make_op_embed(message, image='', footer='𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 𝐎𝐅𝐅𝐈𝐂𝐈𝐀𝐋', op_title='𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 • 𝐎𝐏'):
+    body=op_decorate(message)
+    emb=discord.Embed(title=f'{OP_EMOJIS[6]} **{op_title}** {OP_EMOJIS[6]}', description=body, color=discord.Color.from_rgb(110,70,220))
+    if image:
+        emb.set_image(url=image)
+    if footer:
+        emb.set_footer(text=footer)
+    return emb
 
-class AnnouncementModal(discord.ui.Modal, title='LIGHTNESS • ANNOUNCEMENT'):
-    message = discord.ui.TextInput(label='Announcement', style=discord.TextStyle.paragraph, max_length=1900)
-    async def on_submit(self, i):
-        if not can_dashboard(i.user.id): return await deny(i)
-        cfg = guild_cfg(i.guild.id)['announcement']; cid = cfg.get('channel_id')
-        if not cid: return await i.response.send_message(f"{E['verify']} Set Announcement channel first.", ephemeral=True)
-        ch=i.guild.get_channel(int(cid))
-        if not ch: return await i.response.send_message(f"{E['verify']} Saved channel no longer exists.", ephemeral=True)
-        text = f"{E['crown']} **𝐀𝐍𝐍𝐎𝐔𝐍𝐂𝐄𝐌𝐄𝐍𝐓** {E['crown']}\n\n{E['fire']} {self.message.value}\n\n{E['diamond']} **LIGHTNESS OFFICIAL**"
-        await ch.send(text)
-        await i.response.send_message(f"{E['star']} Announcement sent to {ch.mention}.", ephemeral=True)
+class OPEditModal(discord.ui.Modal, title='LIGHTNESS — Edit OP'):
+    op_title=discord.ui.TextInput(label='OP Title', max_length=80, required=True)
+    message=discord.ui.TextInput(label='OP Message / Test', style=discord.TextStyle.paragraph, max_length=4000, required=True)
+    image=discord.ui.TextInput(label='Image/GIF URL (optional)', max_length=1000, required=False)
+    footer=discord.ui.TextInput(label='Footer (optional)', max_length=200, required=False)
+    async def on_submit(self,i):
+        if not allowed(i.user.id,i):
+            return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**', ephemeral=True)
+        DATA['op'].update(op_title=str(self.op_title.value), message=str(self.message.value), image=str(self.image.value), footer=str(self.footer.value) or '𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 𝐎𝐅𝐅𝐈𝐂𝐈𝐀𝐋')
+        save()
+        await i.response.send_message(f'{VERIFY} **𝐎𝐏 𝐒𝐀𝐕𝐄𝐃**', ephemeral=True)
 
-class TicketSetupModal(discord.ui.Modal, title='LIGHTNESS • TICKET SETUP'):
-    category_id = discord.ui.TextInput(label='Category ID', placeholder='Category where tickets will be created')
-    panel_channel_id = discord.ui.TextInput(label='Panel Channel ID', placeholder='Channel for the ticket panel')
-    async def on_submit(self, i):
-        if not can_dashboard(i.user.id): return await deny(i)
-        try: catid=int(str(self.category_id.value)); chid=int(str(self.panel_channel_id.value))
-        except: return await i.response.send_message(f"{E['verify']} Invalid ID.", ephemeral=True)
-        cat=i.guild.get_channel(catid); ch=i.guild.get_channel(chid)
-        if not isinstance(cat, discord.CategoryChannel) or not isinstance(ch, discord.TextChannel):
-            return await i.response.send_message(f"{E['verify']} Category or text channel not found.", ephemeral=True)
-        guild_cfg(i.guild.id)['ticket']={'category_id':catid,'panel_channel_id':chid}
-        save_json(DATA_FILE, DATA)
-        await ch.send(f"{E['ticket']} **𝐓𝐈𝐂𝐊𝐄𝐓 𝐒𝐔𝐏𝐏𝐎𝐑𝐓** {E['ticket']}\n{E['diamond']} Press the button below to create a private ticket.", view=TicketPanelView())
-        await i.response.send_message(f"{E['crown']} Ticket panel published in {ch.mention}.", ephemeral=True)
+class OPDashboard(discord.ui.View):
+    def __init__(self): super().__init__(timeout=300)
+    @discord.ui.button(label='EDIT', style=discord.ButtonStyle.primary)
+    async def edit(self,i,b):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        c=DATA['op']; m=OPEditModal(); m.op_title.default=c.get('op_title','𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 • 𝐎𝐏'); m.message.default=c.get('message',''); m.image.default=c.get('image',''); m.footer.default=c.get('footer','𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 𝐎𝐅𝐅𝐈𝐂𝐈𝐀𝐋'); await i.response.send_modal(m)
+    @discord.ui.button(label='TEST', style=discord.ButtonStyle.secondary)
+    async def test(self,i,b):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        c=DATA['op']; await i.response.send_message(embed=make_op_embed(c.get('message',''),c.get('image',''),c.get('footer','')),ephemeral=True)
+    @discord.ui.button(label='SEND HERE', style=discord.ButtonStyle.success)
+    async def send_here(self,i,b):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        c=DATA['op']; await i.channel.send(embed=make_op_embed(c.get('message',''),c.get('image',''),c.get('footer',''))); await i.response.send_message(f'{VERIFY} **𝐎𝐏 𝐒𝐄𝐍𝐓**',ephemeral=True)
+
+def make_embed(cfg, member=None, guild=None):
+    emb=discord.Embed(title=render(cfg.get('title',''),member,guild), description=render(cfg.get('description',''),member,guild))
+    if cfg.get('image'): emb.set_image(url=render(cfg['image'],member,guild))
+    return emb
+
+def style(name): return {'green':discord.ButtonStyle.success,'red':discord.ButtonStyle.danger,'blue':discord.ButtonStyle.primary,'gray':discord.ButtonStyle.secondary}.get(name,discord.ButtonStyle.primary)
+
+def parse_emoji(s):
+    if not s: return None
+    try: return discord.PartialEmoji.from_str(s)
+    except Exception: return s
+
+class AccessDeniedView(discord.ui.View): pass
+
+class VerifyView(discord.ui.View):
+    def __init__(self): super().__init__(timeout=None)
+    @discord.ui.button(label='VERIFY', style=discord.ButtonStyle.success, custom_id='lightness_verify')
+    async def verify(self, interaction, button):
+        role=interaction.guild.get_role(DATA.get('verify_role',0)) if interaction.guild else None
+        if not role: return await interaction.response.send_message(f'{ERROR} Verification role is not configured.', ephemeral=True)
+        if role in interaction.user.roles: return await interaction.response.send_message(f'{VERIFY} **𝐀𝐋𝐑𝐄𝐀𝐃𝐘 𝐕𝐄𝐑𝐈𝐅𝐈𝐄𝐃**', ephemeral=True)
+        try:
+            await interaction.user.add_roles(role, reason='LIGHTNESS verification')
+            await interaction.response.send_message(f'{VERIFY} **𝐕𝐄𝐑𝐈𝐅𝐈𝐄𝐃!** {ARROW} {role.mention}', ephemeral=True)
+        except discord.Forbidden: await interaction.response.send_message(f'{ERROR} Bot role must be above the verification role.', ephemeral=True)
+
+class AnnouncementModal(discord.ui.Modal, title='LIGHTNESS — Edit Announcement'):
+    title_input=discord.ui.TextInput(label='Title',max_length=256,required=False)
+    desc_input=discord.ui.TextInput(label='Description',style=discord.TextStyle.paragraph,max_length=4000,required=False)
+    image_input=discord.ui.TextInput(label='Image/GIF URL',max_length=1000,required=False)
+    channel_input=discord.ui.TextInput(label='Channel ID',max_length=25,required=False)
+    async def on_submit(self,i):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        old=DATA['announcement']; ch=str(self.channel_input.value).strip();
+        old.update(title=str(self.title_input.value),description=str(self.desc_input.value),image=str(self.image_input.value),channel=int(ch) if ch.isdigit() else old.get('channel',DEFAULT_ANNOUNCEMENT_CHANNEL)); save()
+        await i.response.send_message(f'{VERIFY} **𝐀𝐍𝐍𝐎𝐔𝐍𝐂𝐄𝐌𝐄𝐍𝐓 𝐒𝐀𝐕𝐄𝐃**',ephemeral=True)
+
+class SimpleModuleModal(discord.ui.Modal):
+    def __init__(self,module):
+        super().__init__(title=f'LIGHTNESS — Edit {module.title()}'); self.module=module
+        cfg=DATA[module]
+        self.title_input=discord.ui.TextInput(label='Title',max_length=256,required=False,default=cfg.get('title',''))
+        self.desc_input=discord.ui.TextInput(label='Message',style=discord.TextStyle.paragraph,max_length=4000,required=False,default=cfg.get('description',''))
+        self.channel_input=discord.ui.TextInput(label='Channel ID',max_length=25,required=False,default=str(cfg.get('channel',0)))
+        self.image_input=discord.ui.TextInput(label='Image/GIF URL',max_length=1000,required=False,default=cfg.get('image',''))
+        self.add_item(self.title_input); self.add_item(self.desc_input); self.add_item(self.channel_input); self.add_item(self.image_input)
+    async def on_submit(self,i):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        cfg=DATA[self.module]; ch=str(self.channel_input.value).strip(); cfg.update(title=str(self.title_input.value),description=str(self.desc_input.value),image=str(self.image_input.value),channel=int(ch) if ch.isdigit() else cfg.get('channel',0)); save()
+        await i.response.send_message(f'{VERIFY} **{self.module.upper()} SAVED**',ephemeral=True)
+
+class ModuleView(discord.ui.View):
+    def __init__(self,module): super().__init__(timeout=300); self.module=module
+    @discord.ui.button(label='EDIT',style=discord.ButtonStyle.primary)
+    async def edit(self,i,b):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        await i.response.send_modal(SimpleModuleModal(self.module))
+    @discord.ui.button(label='TEST',style=discord.ButtonStyle.secondary)
+    async def test(self,i,b):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        await i.response.send_message(embed=make_embed(DATA[self.module],i.user,i.guild),ephemeral=True)
+    @discord.ui.button(label='ENABLE',style=discord.ButtonStyle.success)
+    async def enable(self,i,b):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        DATA[self.module]['enabled']=True; save(); await i.response.send_message(f'{VERIFY} **{self.module.upper()} ENABLED**',ephemeral=True)
+    @discord.ui.button(label='DISABLE',style=discord.ButtonStyle.danger)
+    async def disable(self,i,b):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        DATA[self.module]['enabled']=False; save(); await i.response.send_message(f'{HAMMER} **{self.module.upper()} DISABLED**',ephemeral=True)
+
+class TicketSetupModal(discord.ui.Modal, title='LIGHTNESS — Ticket Setup'):
+    title_input=discord.ui.TextInput(label='Panel Title',max_length=256,required=False)
+    desc_input=discord.ui.TextInput(label='Panel Message',style=discord.TextStyle.paragraph,max_length=4000,required=False)
+    channel_input=discord.ui.TextInput(label='Panel Channel ID',max_length=25,required=False)
+    category_input=discord.ui.TextInput(label='Ticket Category ID (optional)',max_length=25,required=False)
+    image_input=discord.ui.TextInput(label='Image/GIF URL (optional)',max_length=1000,required=False)
+    async def on_submit(self,i):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        c=DATA['ticket']; c.update(title=str(self.title_input.value),description=str(self.desc_input.value),image=str(self.image_input.value))
+        ch=str(self.channel_input.value); cat=str(self.category_input.value); c['channel']=int(ch) if ch.isdigit() else c.get('channel',0); c['category']=int(cat) if cat.isdigit() else c.get('category',0); save()
+        await i.response.send_message(f'{VERIFY} **𝐓𝐈𝐂𝐊𝐄𝐓 𝐒𝐄𝐓𝐔𝐏 𝐒𝐀𝐕𝐄𝐃**',ephemeral=True)
+
+class TicketButtonModal(discord.ui.Modal, title='Add/Edit Ticket Button'):
+    slot=discord.ui.TextInput(label='Slot (1-5)',max_length=1,required=True)
+    label=discord.ui.TextInput(label='Button Label',max_length=80,required=True)
+    emoji=discord.ui.TextInput(label='Emoji (custom or normal)',max_length=100,required=False)
+    button_style=discord.ui.TextInput(label='Style: green/red/blue/gray',max_length=10,required=False,default='blue')
+    async def on_submit(self,i):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        try: idx=int(str(self.slot.value))-1
+        except: return await i.response.send_message(f'{ERROR} Slot must be 1-5.',ephemeral=True)
+        if not 0<=idx<5: return await i.response.send_message(f'{ERROR} Slot must be 1-5.',ephemeral=True)
+        arr=DATA['ticket']['buttons'];
+        while len(arr)<=idx: arr.append({'label':f'BUTTON {len(arr)+1}','emoji':'🎫','style':'blue'})
+        arr[idx]={'label':str(self.label.value),'emoji':str(self.emoji.value),'style':str(self.button_style.value).lower() or 'blue'}; save()
+        await i.response.send_message(f'{VERIFY} **𝐁𝐔𝐓𝐓𝐎𝐍 {idx+1} 𝐒𝐀𝐕𝐄𝐃**',ephemeral=True)
+
+class TicketDeleteButtonModal(discord.ui.Modal, title='Remove Ticket Button'):
+    slot=discord.ui.TextInput(label='Slot (1-5)',max_length=1,required=True)
+    async def on_submit(self,i):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        try: idx=int(str(self.slot.value))-1
+        except: return await i.response.send_message(f'{ERROR} Invalid slot.',ephemeral=True)
+        if 0<=idx<len(DATA['ticket']['buttons']): DATA['ticket']['buttons'].pop(idx); save(); await i.response.send_message(f'{HAMMER} Button removed.',ephemeral=True)
+        else: await i.response.send_message(f'{ERROR} Button not found.',ephemeral=True)
+
+class TicketManageView(discord.ui.View):
+    def __init__(self): super().__init__(timeout=300)
+    @discord.ui.button(label='ADD / EDIT BUTTON',style=discord.ButtonStyle.primary)
+    async def add(self,i,b): await i.response.send_modal(TicketButtonModal()) if is_master(i) else await i.response.send_message(f'{ERROR} Master access only.',ephemeral=True)
+    @discord.ui.button(label='REMOVE BUTTON',style=discord.ButtonStyle.danger)
+    async def remove(self,i,b): await i.response.send_modal(TicketDeleteButtonModal()) if is_master(i) else await i.response.send_message(f'{ERROR} Master access only.',ephemeral=True)
+    @discord.ui.button(label='VIEW BUTTONS',style=discord.ButtonStyle.secondary)
+    async def view(self,i,b):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        lines=[f"{n}. {x.get('emoji','')} {x.get('label','')} [{x.get('style','blue')}]" for n,x in enumerate(DATA['ticket']['buttons'],1)] or ['None']
+        await i.response.send_message('\n'.join(lines),ephemeral=True)
 
 class TicketPanelView(discord.ui.View):
-    def __init__(self): super().__init__(timeout=None)
-    @discord.ui.button(label='CREATE TICKET', style=discord.ButtonStyle.primary, custom_id='lightness:create_ticket')
-    async def create(self, i, b):
-        cfg=guild_cfg(i.guild.id)['ticket']; cat=i.guild.get_channel(int(cfg.get('category_id',0))) if cfg.get('category_id') else None
-        if not isinstance(cat, discord.CategoryChannel): return await i.response.send_message(f"{E['verify']} Ticket system is not configured.", ephemeral=True)
-        overwrites={i.guild.default_role: discord.PermissionOverwrite(view_channel=False), i.user: discord.PermissionOverwrite(view_channel=True, send_messages=True), i.guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True)}
-        ch=await i.guild.create_text_channel(f'ticket-{i.user.name}'.lower()[:90], category=cat, overwrites=overwrites)
-        await ch.send(f"{E['ticket']} {i.user.mention} **Ticket created.**\n{E['diamond']} Staff will assist you here.", view=CloseTicketView())
-        await i.response.send_message(f"{E['star']} Ticket created: {ch.mention}", ephemeral=True)
+    def __init__(self):
+        super().__init__(timeout=None)
+        for n,b in enumerate(DATA['ticket']['buttons'][:5]):
+            btn=discord.ui.Button(label=b.get('label','Ticket')[:80],style=style(b.get('style','blue')),emoji=parse_emoji(b.get('emoji')),custom_id=f"lightness_ticket_{n}")
+            async def callback(i, n=n): await create_ticket(i,n)
+            btn.callback=callback; self.add_item(btn)
 
 class CloseTicketView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
-    @discord.ui.button(label='CLOSE TICKET', style=discord.ButtonStyle.danger, custom_id='lightness:close_ticket')
-    async def close(self, i,b):
-        await i.response.send_message(f"{E['fire']} Closing ticket...", ephemeral=True)
-        await i.channel.delete(reason=f'Closed by {i.user}')
+    @discord.ui.button(label='CLOSE TICKET',style=discord.ButtonStyle.danger,custom_id='lightness_close_ticket')
+    async def close(self,i,b):
+        if not (i.channel and i.channel.name.startswith('ticket-')): return await i.response.send_message('Not a ticket channel.',ephemeral=True)
+        await i.response.send_message(f'{HAMMER} Ticket closing...'); await asyncio.sleep(1); await i.channel.delete(reason='Ticket closed')
 
-class MainView(discord.ui.View):
-    def __init__(self): super().__init__(timeout=None)
-    async def check(self,i):
-        if not can_dashboard(i.user.id): await deny(i); return False
-        return True
-    @discord.ui.button(label='WELCOME', style=discord.ButtonStyle.success, custom_id='lightness:welcome')
-    async def welcome(self,i,b):
-        if await self.check(i): await i.response.send_modal(ChannelMessageModal('welcome'))
-    @discord.ui.button(label='GOODBYE', style=discord.ButtonStyle.danger, custom_id='lightness:goodbye')
-    async def goodbye(self,i,b):
-        if await self.check(i): await i.response.send_modal(ChannelMessageModal('goodbye'))
-    @discord.ui.button(label='ANNOUNCEMENT', style=discord.ButtonStyle.primary, custom_id='lightness:announcement')
-    async def announcement(self,i,b):
-        if await self.check(i): await i.response.send_modal(AnnouncementModal())
-    @discord.ui.button(label='TICKET', style=discord.ButtonStyle.secondary, custom_id='lightness:ticket')
-    async def ticket(self,i,b):
-        if await self.check(i): await i.response.send_modal(TicketSetupModal())
-    @discord.ui.button(label='SERVER INFO', style=discord.ButtonStyle.secondary, custom_id='lightness:server_info')
-    async def info(self,i,b):
-        if not await self.check(i): return
-        g=i.guild
-        em=discord.Embed(title=f"{E['crown']} 𝐒𝐄𝐑𝐕𝐄𝐑 𝐈𝐍𝐅𝐎 {E['crown']}", description=f"{E['diamond']} **{g.name}**\n\n{E['star']} Members: **{g.member_count}**\n{E['verify']} Owner: <@{g.owner_id}>\n{E['bot']} ID: `{g.id}`", color=discord.Color.blurple())
-        await i.response.send_message(embed=em, ephemeral=True)
-    @discord.ui.button(label='VERIFY', style=discord.ButtonStyle.secondary, custom_id='lightness:verify')
-    async def verify(self,i,b):
-        if not await self.check(i): return
-        await i.response.send_message(f"{E['verify']} Verify setup can be configured with `/verify-setup`.", ephemeral=True)
+async def create_ticket(i, slot):
+    if not i.guild: return await i.response.send_message(f'{ERROR} Server only.',ephemeral=True)
+    await i.response.defer(ephemeral=True)
+    cfg=DATA['ticket']; category=i.guild.get_channel(int(cfg.get('category',0))) if cfg.get('category') else None
+    overwrites={i.guild.default_role:discord.PermissionOverwrite(view_channel=False),i.user:discord.PermissionOverwrite(view_channel=True,send_messages=True,read_message_history=True)}
+    if i.guild.me: overwrites[i.guild.me]=discord.PermissionOverwrite(view_channel=True,send_messages=True,manage_channels=True,manage_messages=True)
+    name=f"ticket-{re.sub(r'[^a-z0-9-]','',i.user.name.lower())[:18]}-{str(i.user.id)[-4:]}"
+    try:
+        ch=await i.guild.create_text_channel(name,category=category,overwrites=overwrites,reason='LIGHTNESS ticket')
+        b=cfg['buttons'][slot] if slot<len(cfg['buttons']) else {'label':'SUPPORT'}
+        await ch.send(f'{CROWN} **𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 𝐓𝐈𝐂𝐊𝐄𝐓**\n{ARROW} **Type:** {b.get("label","Support")}\n{ARROW} **User:** {i.user.mention}',view=CloseTicketView())
+        await i.followup.send(f'{VERIFY} Ticket created: {ch.mention}',ephemeral=True)
+    except discord.Forbidden: await i.followup.send(f'{ERROR} I need **Manage Channels** permission.',ephemeral=True)
 
-class AdminView(discord.ui.View):
-    def __init__(self): super().__init__(timeout=None)
-    @discord.ui.button(label='GIVE ACCESS', style=discord.ButtonStyle.success, custom_id='lightness:give_access')
-    async def give(self,i,b):
-        if not is_owner(i.user.id): return await deny(i)
-        await i.response.send_modal(AccessModal(True))
-    @discord.ui.button(label='REMOVE ACCESS', style=discord.ButtonStyle.danger, custom_id='lightness:remove_access')
-    async def remove(self,i,b):
-        if not is_owner(i.user.id): return await deny(i)
-        await i.response.send_modal(AccessModal(False))
-    @discord.ui.button(label='ACCESS LIST', style=discord.ButtonStyle.primary, custom_id='lightness:access_list')
-    async def listing(self,i,b):
-        if not is_owner(i.user.id): return await deny(i)
-        txt='\n'.join(f'{E["arrow"]} <@{x}>' for x in sorted(ACCESS)) or 'No users added.'
-        await i.response.send_message(f'{E["crown"]} **MAIN ACCESS**\n{txt}', ephemeral=True)
+class TicketDashboard(discord.ui.View):
+    def __init__(self): super().__init__(timeout=300)
+    @discord.ui.button(label='SETUP',style=discord.ButtonStyle.primary)
+    async def setup(self,i,b):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        c=DATA['ticket']; m=TicketSetupModal(); m.title_input.default=c.get('title',''); m.desc_input.default=c.get('description',''); m.channel_input.default=str(c.get('channel',0)); m.category_input.default=str(c.get('category',0)); m.image_input.default=c.get('image',''); await i.response.send_modal(m)
+    @discord.ui.button(label='BUTTONS',style=discord.ButtonStyle.secondary)
+    async def buttons(self,i,b):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        await i.response.send_message(f'{CROWN} **𝐓𝐈𝐂𝐊𝐄𝐓 𝐁𝐔𝐓𝐓𝐎𝐍 𝐌𝐀𝐍𝐀𝐆𝐄𝐑**',view=TicketManageView(),ephemeral=True)
+    @discord.ui.button(label='TEST',style=discord.ButtonStyle.secondary)
+    async def test(self,i,b):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        c=DATA['ticket']; emb=discord.Embed(title=c.get('title',''),description=c.get('description','')); 
+        if c.get('image'): emb.set_image(url=c['image'])
+        await i.response.send_message(embed=emb,view=TicketPanelView(),ephemeral=True)
+    @discord.ui.button(label='PUBLISH',style=discord.ButtonStyle.success)
+    async def publish(self,i,b):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        c=DATA['ticket']; ch=i.guild.get_channel(int(c.get('channel',0))) if c.get('channel') else None
+        if not ch: return await i.response.send_message(f'{ERROR} Set a panel channel first.',ephemeral=True)
+        emb=discord.Embed(title=c.get('title',''),description=c.get('description','')); 
+        if c.get('image'): emb.set_image(url=c['image'])
+        await ch.send(embed=emb,view=TicketPanelView()); c['enabled']=True; save(); await i.response.send_message(f'{VERIFY} Published in {ch.mention}.',ephemeral=True)
+    @discord.ui.button(label='ENABLE/DISABLE',style=discord.ButtonStyle.danger)
+    async def toggle(self,i,b):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        DATA['ticket']['enabled']=not DATA['ticket'].get('enabled',False); save(); await i.response.send_message(f"{VERIFY} Ticket system **{'ENABLED' if DATA['ticket']['enabled'] else 'DISABLED'}**.",ephemeral=True)
 
-class AccessModal(discord.ui.Modal):
-    def __init__(self, add):
-        self.adding=add; super().__init__(title='LIGHTNESS • GIVE ACCESS' if add else 'LIGHTNESS • REMOVE ACCESS')
-        self.uid=discord.ui.TextInput(label='Discord User ID', max_length=20); self.add_item(self.uid)
+
+class SayDashboardModal(discord.ui.Modal, title='LIGHTNESS — Send Message'):
+    message=discord.ui.TextInput(label='Message',style=discord.TextStyle.paragraph,max_length=4000)
+    image=discord.ui.TextInput(label='Image/GIF URL (optional)',max_length=1000,required=False)
     async def on_submit(self,i):
-        if not is_owner(i.user.id): return await deny(i)
-        try: uid=int(str(self.uid.value).strip())
-        except: return await i.response.send_message(f'{E["verify"]} Invalid ID.',ephemeral=True)
-        if self.adding: ACCESS.add(uid)
-        else: ACCESS.discard(uid)
-        save_json(ACCESS_FILE, sorted(ACCESS))
-        await i.response.send_message(f'{E["diamond"]} Access {"granted" if self.adding else "removed"} for <@{uid}>.',ephemeral=True)
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} Access denied.',ephemeral=True)
+        await i.response.defer(ephemeral=True)
+        if i.channel:
+            await i.channel.send(content=str(self.message.value))
+        await i.followup.send(f'{VERIFY} Sent.',ephemeral=True)
 
-class Bot(commands.Bot):
+class VerifyRoleSelect(discord.ui.RoleSelect):
+    def __init__(self): super().__init__(placeholder='Select verification role',min_values=1,max_values=1)
+    async def callback(self,i):
+        if not is_master(i): return await i.response.send_message(f'{ERROR} Master access only.',ephemeral=True)
+        DATA['verify_role']=self.values[0].id; save()
+        await i.response.send_message(f'{VERIFY} Verification role set to {self.values[0].mention}.',ephemeral=True)
+
+class VerifyDashboardView(discord.ui.View):
     def __init__(self):
-        intents=discord.Intents.default(); intents.members=True; intents.guilds=True; intents.message_content=True
-        super().__init__(command_prefix='!', intents=intents, help_command=None)
-    async def setup_hook(self):
-        self.add_view(MainView()); self.add_view(AdminView()); self.add_view(TicketPanelView()); self.add_view(CloseTicketView())
-        await self.tree.sync()
+        super().__init__(timeout=300); self.add_item(VerifyRoleSelect())
+    @discord.ui.button(label='TEST PANEL', style=discord.ButtonStyle.success)
+    async def test(self,i,b):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} Access denied.',ephemeral=True)
+        role=i.guild.get_role(DATA.get('verify_role',0)) if i.guild else None
+        if not role: return await i.response.send_message(f'{ERROR} Verification role is not configured.',ephemeral=True)
+        await i.response.send_message(f'{CROWN} **𝐈𝐍𝐃𝐈𝐀𝐍 𝐁𝐋𝐎𝐎𝐃 𝐌𝐎𝐎𝐍 𝐒𝟏**\n{VERIFY} **𝐍𝐎 𝐇𝐀𝐂𝐊 • 𝐍𝐎 𝐄𝐗𝐏𝐋𝐎𝐈𝐓**\n{ARROW} Press **VERIFY** to receive {role.mention}.',view=VerifyView(),ephemeral=True)
 
-bot=Bot()
+class AccessUserSelect(discord.ui.UserSelect):
+    def __init__(self,action): super().__init__(placeholder=f'{action.title()} user',min_values=1,max_values=1); self.action=action
+    async def callback(self,i):
+        if not is_master(i): return await i.response.send_message(f'{ERROR} Master access only.',ephemeral=True)
+        u=self.values[0]
+        if self.action=='add':
+            if u.id not in DATA['users']: DATA['users'].append(u.id); save()
+            msg=f'{VERIFY} Access granted to {u.mention}.'
+        else:
+            if u.id in DATA['users']: DATA['users'].remove(u.id); save()
+            msg=f'{HAMMER} Access removed from {u.mention}.'
+        await i.response.send_message(msg,ephemeral=True)
 
-@bot.tree.command(name='dashboard', description='Open the LIGHTNESS Main Dashboard')
-async def dashboard(i):
-    if not can_dashboard(i.user.id): return await deny(i)
-    em=discord.Embed(title=f'{E["crown"]} 𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 • 𝐌𝐀𝐈𝐍 𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 {E["crown"]}', description=f'{E["diamond"]} Select a module below to configure your server.\n\n{E["verify"]} Premium LIGHTNESS controls', color=discord.Color.blurple())
-    await i.response.send_message(embed=em,view=MainView(),ephemeral=True)
+class AccessDashboardView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300); self.add_item(AccessUserSelect('add')); self.add_item(AccessUserSelect('remove'))
+    @discord.ui.button(label='LIST', style=discord.ButtonStyle.secondary)
+    async def list_access(self,i,b):
+        if not is_master(i): return await i.response.send_message(f'{ERROR} Master access only.',ephemeral=True)
+        users=', '.join(f'<@{x}>' for x in DATA['users']) or 'None'; roles=', '.join(f'<@&{x}>' for x in DATA['roles']) or 'None'
+        await i.response.send_message(f'{CROWN} **𝐀𝐂𝐂𝐄𝐒𝐒**\n{ARROW} Users: {users}\n{ARROW} Roles: {roles}',ephemeral=True)
 
-@bot.tree.command(name='admin-dashboard', description='Owner-only access dashboard')
-async def admin_dashboard(i):
-    if not is_owner(i.user.id): return await deny(i)
-    em=discord.Embed(title=f'{E["crown"]} 𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 • 𝐀𝐃𝐌𝐈𝐍 {E["crown"]}', description=f'{E["verify"]} Owner only\n\n{E["diamond"]} Manage Main Dashboard access.', color=discord.Color.gold())
-    await i.response.send_message(embed=em,view=AdminView(),ephemeral=True)
+class MainDashboard(discord.ui.View):
+    def __init__(self): super().__init__(timeout=300)
+    async def guard(self,i):
+        if not allowed(i.user.id,i): await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True); return False
+        return True
+    @discord.ui.button(label='ANNOUNCEMENT',style=discord.ButtonStyle.primary)
+    async def announcement(self,i,b):
+        if not await self.guard(i): return
+        a=DATA['announcement']; await i.response.send_message(f'{CROWN} **𝐀𝐍𝐍𝐎𝐔𝐍𝐂𝐄𝐌𝐄𝐍𝐓 𝐒𝐄𝐓𝐔𝐏**\n{ARROW} Edit • Test • Publish',view=AnnouncementView(),ephemeral=True)
+    @discord.ui.button(label='WELCOME',style=discord.ButtonStyle.success)
+    async def welcome(self,i,b):
+        if not await self.guard(i): return
+        await i.response.send_message(f'{BUTTERFLY} **𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐒𝐄𝐓𝐔𝐏**',view=ModuleView('welcome'),ephemeral=True)
+    @discord.ui.button(label='GOODBYE',style=discord.ButtonStyle.danger)
+    async def goodbye(self,i,b):
+        if not await self.guard(i): return
+        await i.response.send_message(f'{FIRE} **𝐆𝐎𝐎𝐃𝐁𝐘𝐄 𝐒𝐄𝐓𝐔𝐏**',view=ModuleView('goodbye'),ephemeral=True)
+    @discord.ui.button(label='TICKET',style=discord.ButtonStyle.secondary)
+    async def ticket(self,i,b):
+        if not await self.guard(i): return
+        await i.response.send_message(f'{DIAMOND} **𝐓𝐈𝐂𝐊𝐄𝐓 𝐒𝐄𝐓𝐔𝐏**',view=TicketDashboard(),ephemeral=True)
+    @discord.ui.button(label='VERIFY',style=discord.ButtonStyle.success)
+    async def verify(self,i,b):
+        if not await self.guard(i): return
+        await i.response.send_message(f'{VERIFY} **𝐕𝐄𝐑𝐈𝐅𝐘 𝐒𝐄𝐓𝐔𝐏**',view=VerifyDashboardView(),ephemeral=True)
+    @discord.ui.button(label='ACCESS',style=discord.ButtonStyle.secondary)
+    async def access(self,i,b):
+        if not await self.guard(i): return
+        await i.response.send_message(f'{CROWN} **𝐀𝐂𝐂𝐄𝐒𝐒 𝐌𝐀𝐍𝐀𝐆𝐄𝐑**',view=AccessDashboardView(),ephemeral=True)
+    @discord.ui.button(label='OP',style=discord.ButtonStyle.primary, row=2)
+    async def op_panel(self,i,b):
+        if not await self.guard(i): return
+        c=DATA['op']
+        await i.response.send_message(f'{CROWN} **𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 • 𝐎𝐏**\n{ARROW} **EDIT** • **TEST** • **SEND HERE**',view=OPDashboard(),ephemeral=True)
 
-@bot.tree.command(name='op', description='Open LIGHTNESS OP Maker')
-async def op(i):
-    if not can_dashboard(i.user.id): return await deny(i)
-    await i.response.send_message(f'{E["crown"]} **LIGHTNESS • OP MAKER**\n{E["diamond"]} Use `/op-message` or `/op-image`.',ephemeral=True)
+    @discord.ui.button(label='SAY',style=discord.ButtonStyle.primary)
+    async def say_panel(self,i,b):
+        if not await self.guard(i): return
+        await i.response.send_modal(SayDashboardModal())
 
-@bot.tree.command(name='op-message', description='Create a formatted LIGHTNESS OP message')
-@app_commands.describe(text='Your raw text')
-async def op_message(i,text:str):
-    if not can_dashboard(i.user.id): return await deny(i)
-    emojis=list(E.values()); random.shuffle(emojis)
-    lines=[x.strip() for x in text.splitlines() if x.strip()] or [text]
-    out=f'{emojis[0]} **𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 • 𝐎𝐏** {emojis[1]}\n\n'
-    for n,line in enumerate(lines): out += f'{emojis[(n+2)%len(emojis)]} **{line}**\n'
-    out += f'\n{emojis[-1]} **𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 𝐎𝐅𝐅𝐈𝐂𝐈𝐀𝐋**'
-    chunks=[out[i:i+1900] for i in range(0,len(out),1900)]
-    for c in chunks: await i.channel.send(c)
-    await i.response.send_message(f'{E["star"]} OP sent.',ephemeral=True)
+class AnnouncementView(discord.ui.View):
+    def __init__(self): super().__init__(timeout=300)
+    @discord.ui.button(label='EDIT',style=discord.ButtonStyle.primary)
+    async def edit(self,i,b):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        a=DATA['announcement']; m=AnnouncementModal(); m.title_input.default=a.get('title',''); m.desc_input.default=a.get('description',''); m.image_input.default=a.get('image',''); m.channel_input.default=str(a.get('channel',DEFAULT_ANNOUNCEMENT_CHANNEL)); await i.response.send_modal(m)
+    @discord.ui.button(label='TEST',style=discord.ButtonStyle.secondary)
+    async def test(self,i,b):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        await i.response.send_message(embed=make_embed(DATA['announcement'],i.user,i.guild),ephemeral=True)
+    @discord.ui.button(label='PUBLISH',style=discord.ButtonStyle.success)
+    async def publish(self,i,b):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        a=DATA['announcement']; ch=i.guild.get_channel(int(a.get('channel',0))) if a.get('channel') else None
+        if not ch: return await i.response.send_message(f'{ERROR} Channel not found.',ephemeral=True)
+        await ch.send(embed=make_embed(a,i.user,i.guild)); await i.response.send_message(f'{VERIFY} Published in {ch.mention}.',ephemeral=True)
+    @discord.ui.button(label='DELETE SAVED',style=discord.ButtonStyle.danger)
+    async def delete(self,i,b):
+        if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+        DATA['announcement']={'title':'','description':'','image':'','channel':DEFAULT_ANNOUNCEMENT_CHANNEL}; save(); await i.response.send_message(f'{HAMMER} Saved announcement cleared.',ephemeral=True)
 
-@bot.tree.command(name='op-image', description='Create an OP image post')
-@app_commands.describe(image_url='Direct image URL', caption='Optional caption')
-async def op_image(i,image_url:str,caption:str=''):
-    if not can_dashboard(i.user.id): return await deny(i)
-    em=discord.Embed(title=f'{E["crown"]} 𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 • 𝐎𝐏 {E["crown"]}', description=(f'{E["fire"]} {caption}' if caption else f'{E["diamond"]} 𝐎𝐏 𝐈𝐌𝐀𝐆𝐄'), color=discord.Color.blurple())
-    em.set_image(url=image_url); em.set_footer(text='LIGHTNESS OFFICIAL')
-    await i.channel.send(embed=em); await i.response.send_message(f'{E["star"]} Image OP sent.',ephemeral=True)
+@bot.event
+async def on_ready():
+    bot.add_view(VerifyView()); bot.add_view(TicketPanelView()); bot.add_view(CloseTicketView())
+    try:
+        synced=await bot.tree.sync(); print(f'LIGHTNESS online as {bot.user} | synced {len(synced)} commands')
+    except Exception as ex: print('Sync error:',ex)
 
 @bot.event
 async def on_member_join(member):
-    cfg=guild_cfg(member.guild.id)['welcome']; cid=cfg.get('channel_id')
-    if not cid: return
-    ch=member.guild.get_channel(int(cid))
+    c=DATA.get('welcome',{})
+    if not c.get('enabled'): return
+    ch=member.guild.get_channel(int(c.get('channel',0))) if c.get('channel') else None
     if ch:
-        msg=cfg.get('message') or f'{E["crown"]} Welcome {member.mention} to **{member.guild.name}**! {E["diamond"]}'
-        await ch.send(msg.replace('{user}',member.mention).replace('{server}',member.guild.name).replace('{member_count}',str(member.guild.member_count)))
+        try: await ch.send(embed=make_embed(c,member,member.guild))
+        except Exception as ex: print('Welcome error:',ex)
 
 @bot.event
 async def on_member_remove(member):
-    cfg=guild_cfg(member.guild.id)['goodbye']; cid=cfg.get('channel_id')
-    if not cid: return
-    ch=member.guild.get_channel(int(cid))
+    c=DATA.get('goodbye',{})
+    if not c.get('enabled'): return
+    ch=member.guild.get_channel(int(c.get('channel',0))) if c.get('channel') else None
     if ch:
-        msg=cfg.get('message') or f'{E["fire"]} {member.mention} has left **{member.guild.name}**. {E["diamond"]}'
-        await ch.send(msg.replace('{user}',member.mention).replace('{server}',member.guild.name).replace('{member_count}',str(member.guild.member_count)))
+        try: await ch.send(embed=make_embed(c,member,member.guild))
+        except Exception as ex: print('Goodbye error:',ex)
 
-@bot.event
-async def on_ready(): print(f'LIGHTNESS online as {bot.user} ({bot.user.id})')
+@bot.tree.command(name='dashboard',description='Open the LIGHTNESS setup dashboard.')
+async def dashboard(i):
+    if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
+    await i.response.send_message(f'{CROWN} **𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃**\n{ARROW} Select a module below.',view=MainDashboard(),ephemeral=True)
 
-if BOT_TOKEN == 'PUT_YOUR_BOT_TOKEN_HERE': print('Set DISCORD_TOKEN in Railway Variables.')
-else: bot.run(BOT_TOKEN)
+op_group = app_commands.Group(name='op', description='LIGHTNESS OP tools')
+
+@op_group.command(name='message', description='Create an automatic LIGHTNESS OP message')
+@app_commands.describe(message='Plain text; LIGHTNESS adds the premium emoji styling automatically')
+async def op_message(i, message: str):
+    if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**', ephemeral=True)
+    await i.response.defer(ephemeral=True)
+    await i.channel.send(embed=make_op_embed(message))
+    await i.followup.send(f'{VERIFY} **𝐎𝐏 𝐒𝐄𝐍𝐓**', ephemeral=True)
+
+@op_group.command(name='image', description='Create a LIGHTNESS OP image post')
+@app_commands.describe(image='Image/GIF URL', caption='Caption/test text')
+async def op_image(i, image: str, caption: str = ''):
+    if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**', ephemeral=True)
+    await i.response.defer(ephemeral=True)
+    await i.channel.send(embed=make_op_embed(caption or DATA['op'].get('message',''), image, DATA['op'].get('footer','𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 𝐎𝐅𝐅𝐈𝐂𝐈𝐀𝐋')))
+    await i.followup.send(f'{VERIFY} **𝐈𝐌𝐀𝐆𝐄 𝐎𝐏 𝐒𝐄𝐍𝐓**', ephemeral=True)
+
+bot.tree.add_command(op_group)
+
+@bot.tree.command(name='say',description='Send a message, optionally with an image/GIF.')
+@app_commands.describe(message='Message to send',image='Optional image/GIF upload')
+async def say(i,message:str,image:discord.Attachment|None=None):
+    if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **ACCESS DENIED**',ephemeral=True)
+    await i.response.defer(ephemeral=True); files=[]
+    if image: files.append(await image.to_file())
+    await i.channel.send(content=message,files=files); await i.followup.send(f'{VERIFY} Sent.',ephemeral=True)
+
+@bot.tree.command(name='verify_setup',description='Set verification role and post panel.')
+@app_commands.describe(role='Role granted after verification')
+async def verify_setup(i,role:discord.Role):
+    if not is_master(i): return await i.response.send_message(f'{ERROR} Master access only.',ephemeral=True)
+    DATA['verify_role']=role.id; save(); await i.response.send_message(f'{CROWN}\n**𝐈𝐍𝐃𝐈𝐀𝐍 𝐁𝐋𝐎𝐎𝐃 𝐌𝐎𝐎𝐍 𝐒𝟏**\n{VERIFY} **𝐍𝐎 𝐇𝐀𝐂𝐊 • 𝐍𝐎 𝐄𝐗𝐏𝐋𝐎𝐈𝐓**\n{ARROW} Press **VERIFY** to receive {role.mention}.',view=VerifyView())
+
+@bot.tree.command(name='add_access',description='Grant LIGHTNESS bot access to a user.')
+async def add_access(i,user:discord.Member):
+    if not is_master(i): return await i.response.send_message(f'{ERROR} Master access only.',ephemeral=True)
+    if user.id not in DATA['users']: DATA['users'].append(user.id); save()
+    await i.response.send_message(f'{VERIFY} Access granted to {user.mention}.',ephemeral=True)
+
+@bot.tree.command(name='remove_access',description='Remove LIGHTNESS bot access from a user.')
+async def remove_access(i,user:discord.Member):
+    if not is_master(i): return await i.response.send_message(f'{ERROR} Master access only.',ephemeral=True)
+    if user.id in DATA['users']: DATA['users'].remove(user.id); save()
+    await i.response.send_message(f'{HAMMER} Access removed from {user.mention}.',ephemeral=True)
+
+@bot.tree.command(name='add_role',description='Allow a role to use LIGHTNESS.')
+async def add_role(i,role:discord.Role):
+    if not is_master(i): return await i.response.send_message(f'{ERROR} Master access only.',ephemeral=True)
+    if role.id not in DATA['roles']: DATA['roles'].append(role.id); save()
+    await i.response.send_message(f'{VERIFY} Bot access granted to {role.mention}.',ephemeral=True)
+
+@bot.tree.command(name='remove_role',description='Remove bot access from a role.')
+async def remove_role(i,role:discord.Role):
+    if not is_master(i): return await i.response.send_message(f'{ERROR} Master access only.',ephemeral=True)
+    if role.id in DATA['roles']: DATA['roles'].remove(role.id); save()
+    await i.response.send_message(f'{HAMMER} Bot access removed from {role.mention}.',ephemeral=True)
+
+@bot.tree.command(name='access_list',description='Show authorized users and roles.')
+async def access_list(i):
+    if not is_master(i): return await i.response.send_message(f'{ERROR} Master access only.',ephemeral=True)
+    users=', '.join(f'<@{x}>' for x in DATA['users']) or 'None'; roles=', '.join(f'<@&{x}>' for x in DATA['roles']) or 'None'
+    await i.response.send_message(f'{CROWN} **𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 𝐀𝐂𝐂𝐄𝐒𝐒**\n{ARROW} Users: {users}\n{ARROW} Roles: {roles}\n{ARROW} Master: <@{MASTER_ID}>',ephemeral=True)
+
+if not TOKEN: raise RuntimeError('DISCORD_TOKEN is not set.')
+bot.run(TOKEN)
