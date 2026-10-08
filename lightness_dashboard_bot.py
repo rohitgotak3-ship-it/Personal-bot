@@ -12,7 +12,6 @@ from pathlib import Path
 # =========================
 BOT_TOKEN = os.getenv("DISCORD_TOKEN", "PUT_YOUR_BOT_TOKEN_HERE")
 OWNER_ID = 1433457392917676138
-GUILD_ID = int(os.getenv("GUILD_ID", "0") or 0)  # Optional: set for instant slash-command sync
 ACCESS_FILE = Path("main_dashboard_access.json")
 
 # LIGHTNESS custom emoji set
@@ -62,14 +61,12 @@ class LightnessBot(commands.Bot):
         self.add_view(MainDashboardView())
         self.add_view(AdminDashboardView())
 
-        if GUILD_ID:
-            guild = discord.Object(id=GUILD_ID)
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            print(f"Slash commands synced instantly to guild {GUILD_ID}")
-        else:
-            await self.tree.sync()
-            print("Slash commands synced globally. Global propagation can take some time.")
+        # Register commands globally so /op, /add-role, dashboards, etc. work
+        # in every server where this bot is installed. Discord may take some
+        # time to propagate global application commands.
+        synced = await self.tree.sync()
+        names = ", ".join(sorted(c.name for c in synced))
+        print(f"Global slash commands synced: {names}")
 
 
 bot = LightnessBot()
@@ -396,7 +393,7 @@ async def add_role(interaction: discord.Interaction, member: discord.Member, rol
 
 @bot.event
 async def on_ready():
-    print(f"LIGHTNESS online as {bot.user} ({bot.user.id})")
+    print(f"LIGHTNESS online as {bot.user} | global slash commands enabled for all installed servers")
 
 
 if BOT_TOKEN == "PUT_YOUR_BOT_TOKEN_HERE":
