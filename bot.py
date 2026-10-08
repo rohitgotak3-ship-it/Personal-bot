@@ -1,475 +1,250 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import json
-import os
-import random
+import json, os, random
+from pathlib import Path
 
-# =========================
-# LIGHTNESS DASHBOARD SYSTEM
-# =========================
-
-BOT_TOKEN = os.getenv("DISCORD_TOKEN", "PUT_YOUR_BOT_TOKEN_HERE")
-
-# ONLY this ID can open/use the Admin Dashboard
+BOT_TOKEN = os.getenv('DISCORD_TOKEN', 'PUT_YOUR_BOT_TOKEN_HERE')
 OWNER_ID = 1433457392917676138
+DATA_FILE = Path('lightness_data.json')
+ACCESS_FILE = Path('main_dashboard_access.json')
 
-ACCESS_FILE = "main_dashboard_access.json"
+E = {
+    'crown':'<a:BS_crown:1549137817341268058>',
+    'fire':'<a:Fire:1549138871537639507>',
+    'diamond':'<a:diomond:1549139140803563644>',
+    'arrow':'<a:Arrow_White:1549136782971379712>',
+    'verify':'<a:INFAMOUS_Verify:1549136346902175754>',
+    'bot':'<a:bot:1549139254712606830>',
+    'star':'<a:star:1529777112796631141>',
+    'purple':'<a:purple:1529777102100889602>',
+    'ticket':'<a:ticket:1549136416250921060>',
+}
 
+DEFAULT_DATA = {'guilds': {}}
 
-def load_access():
+def load_json(path, default):
     try:
-        with open(ACCESS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            return set(int(x) for x in data)
-    except (FileNotFoundError, json.JSONDecodeError, TypeError, ValueError):
-        return set()
+        with path.open('r', encoding='utf-8') as f: return json.load(f)
+    except Exception: return default
 
+def save_json(path, data):
+    tmp = path.with_suffix(path.suffix+'.tmp')
+    with tmp.open('w', encoding='utf-8') as f: json.dump(data, f, indent=2, ensure_ascii=False)
+    tmp.replace(path)
 
-def save_access(access):
-    with open(ACCESS_FILE, "w", encoding="utf-8") as f:
-        json.dump(sorted(access), f, indent=2)
+DATA = load_json(DATA_FILE, DEFAULT_DATA)
+ACCESS = set(int(x) for x in load_json(ACCESS_FILE, []))
 
+def guild_cfg(gid):
+    g = DATA.setdefault('guilds', {}).setdefault(str(gid), {})
+    g.setdefault('welcome', {})
+    g.setdefault('goodbye', {})
+    g.setdefault('announcement', {})
+    g.setdefault('ticket', {})
+    g.setdefault('verify', {})
+    return g
 
-MAIN_ACCESS = load_access()
+def is_owner(uid): return uid == OWNER_ID
 
+def can_dashboard(uid): return is_owner(uid) or uid in ACCESS
 
-intents = discord.Intents.default()
-intents.guilds = True
-intents.members = True
+async def deny(i):
+    msg = f"{E['verify']} **ACCESS DENIED**\n{E['diamond']} You don't have LIGHTNESS Dashboard access."
+    if i.response.is_done(): await i.followup.send(msg, ephemeral=True)
+    else: await i.response.send_message(msg, ephemeral=True)
 
+class BaseModal(discord.ui.Modal):
+    pass
 
-class LightnessBot(commands.Bot):
+class ChannelMessageModal(discord.ui.Modal):
+    def __init__(self, module):
+        self.module = module
+        super().__init__(title=f'LIGHTNESS • {module.upper()} SETUP')
+        self.channel_id = discord.ui.TextInput(label='Channel ID', placeholder='Paste the channel ID', max_length=20)
+        self.message = discord.ui.TextInput(label='Message', placeholder='Use {user}, {server}, {member_count}', style=discord.TextStyle.paragraph, required=False, max_length=1900)
+        self.add_item(self.channel_id); self.add_item(self.message)
+    async def on_submit(self, i):
+        if not can_dashboard(i.user.id): return await deny(i)
+        try: cid = int(str(self.channel_id.value).strip())
+        except: return await i.response.send_message(f"{E['verify']} Invalid channel ID.", ephemeral=True)
+        ch = i.guild.get_channel(cid)
+        if not isinstance(ch, discord.TextChannel): return await i.response.send_message(f"{E['verify']} Text channel not found.", ephemeral=True)
+        cfg = guild_cfg(i.guild.id)[self.module]
+        cfg.update({'channel_id': cid, 'message': str(self.message.value).strip()})
+        save_json(DATA_FILE, DATA)
+        await i.response.send_message(f"{E['diamond']} **{self.module.title()} saved:** {ch.mention}", ephemeral=True)
+
+class AnnouncementModal(discord.ui.Modal, title='LIGHTNESS • ANNOUNCEMENT'):
+    message = discord.ui.TextInput(label='Announcement', style=discord.TextStyle.paragraph, max_length=1900)
+    async def on_submit(self, i):
+        if not can_dashboard(i.user.id): return await deny(i)
+        cfg = guild_cfg(i.guild.id)['announcement']; cid = cfg.get('channel_id')
+        if not cid: return await i.response.send_message(f"{E['verify']} Set Announcement channel first.", ephemeral=True)
+        ch=i.guild.get_channel(int(cid))
+        if not ch: return await i.response.send_message(f"{E['verify']} Saved channel no longer exists.", ephemeral=True)
+        text = f"{E['crown']} **𝐀𝐍𝐍𝐎𝐔𝐍𝐂𝐄𝐌𝐄𝐍𝐓** {E['crown']}\n\n{E['fire']} {self.message.value}\n\n{E['diamond']} **LIGHTNESS OFFICIAL**"
+        await ch.send(text)
+        await i.response.send_message(f"{E['star']} Announcement sent to {ch.mention}.", ephemeral=True)
+
+class TicketSetupModal(discord.ui.Modal, title='LIGHTNESS • TICKET SETUP'):
+    category_id = discord.ui.TextInput(label='Category ID', placeholder='Category where tickets will be created')
+    panel_channel_id = discord.ui.TextInput(label='Panel Channel ID', placeholder='Channel for the ticket panel')
+    async def on_submit(self, i):
+        if not can_dashboard(i.user.id): return await deny(i)
+        try: catid=int(str(self.category_id.value)); chid=int(str(self.panel_channel_id.value))
+        except: return await i.response.send_message(f"{E['verify']} Invalid ID.", ephemeral=True)
+        cat=i.guild.get_channel(catid); ch=i.guild.get_channel(chid)
+        if not isinstance(cat, discord.CategoryChannel) or not isinstance(ch, discord.TextChannel):
+            return await i.response.send_message(f"{E['verify']} Category or text channel not found.", ephemeral=True)
+        guild_cfg(i.guild.id)['ticket']={'category_id':catid,'panel_channel_id':chid}
+        save_json(DATA_FILE, DATA)
+        await ch.send(f"{E['ticket']} **𝐓𝐈𝐂𝐊𝐄𝐓 𝐒𝐔𝐏𝐏𝐎𝐑𝐓** {E['ticket']}\n{E['diamond']} Press the button below to create a private ticket.", view=TicketPanelView())
+        await i.response.send_message(f"{E['crown']} Ticket panel published in {ch.mention}.", ephemeral=True)
+
+class TicketPanelView(discord.ui.View):
+    def __init__(self): super().__init__(timeout=None)
+    @discord.ui.button(label='CREATE TICKET', style=discord.ButtonStyle.primary, custom_id='lightness:create_ticket')
+    async def create(self, i, b):
+        cfg=guild_cfg(i.guild.id)['ticket']; cat=i.guild.get_channel(int(cfg.get('category_id',0))) if cfg.get('category_id') else None
+        if not isinstance(cat, discord.CategoryChannel): return await i.response.send_message(f"{E['verify']} Ticket system is not configured.", ephemeral=True)
+        overwrites={i.guild.default_role: discord.PermissionOverwrite(view_channel=False), i.user: discord.PermissionOverwrite(view_channel=True, send_messages=True), i.guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True)}
+        ch=await i.guild.create_text_channel(f'ticket-{i.user.name}'.lower()[:90], category=cat, overwrites=overwrites)
+        await ch.send(f"{E['ticket']} {i.user.mention} **Ticket created.**\n{E['diamond']} Staff will assist you here.", view=CloseTicketView())
+        await i.response.send_message(f"{E['star']} Ticket created: {ch.mention}", ephemeral=True)
+
+class CloseTicketView(discord.ui.View):
+    def __init__(self): super().__init__(timeout=None)
+    @discord.ui.button(label='CLOSE TICKET', style=discord.ButtonStyle.danger, custom_id='lightness:close_ticket')
+    async def close(self, i,b):
+        await i.response.send_message(f"{E['fire']} Closing ticket...", ephemeral=True)
+        await i.channel.delete(reason=f'Closed by {i.user}')
+
+class MainView(discord.ui.View):
+    def __init__(self): super().__init__(timeout=None)
+    async def check(self,i):
+        if not can_dashboard(i.user.id): await deny(i); return False
+        return True
+    @discord.ui.button(label='WELCOME', style=discord.ButtonStyle.success, custom_id='lightness:welcome')
+    async def welcome(self,i,b):
+        if await self.check(i): await i.response.send_modal(ChannelMessageModal('welcome'))
+    @discord.ui.button(label='GOODBYE', style=discord.ButtonStyle.danger, custom_id='lightness:goodbye')
+    async def goodbye(self,i,b):
+        if await self.check(i): await i.response.send_modal(ChannelMessageModal('goodbye'))
+    @discord.ui.button(label='ANNOUNCEMENT', style=discord.ButtonStyle.primary, custom_id='lightness:announcement')
+    async def announcement(self,i,b):
+        if await self.check(i): await i.response.send_modal(AnnouncementModal())
+    @discord.ui.button(label='TICKET', style=discord.ButtonStyle.secondary, custom_id='lightness:ticket')
+    async def ticket(self,i,b):
+        if await self.check(i): await i.response.send_modal(TicketSetupModal())
+    @discord.ui.button(label='SERVER INFO', style=discord.ButtonStyle.secondary, custom_id='lightness:server_info')
+    async def info(self,i,b):
+        if not await self.check(i): return
+        g=i.guild
+        em=discord.Embed(title=f"{E['crown']} 𝐒𝐄𝐑𝐕𝐄𝐑 𝐈𝐍𝐅𝐎 {E['crown']}", description=f"{E['diamond']} **{g.name}**\n\n{E['star']} Members: **{g.member_count}**\n{E['verify']} Owner: <@{g.owner_id}>\n{E['bot']} ID: `{g.id}`", color=discord.Color.blurple())
+        await i.response.send_message(embed=em, ephemeral=True)
+    @discord.ui.button(label='VERIFY', style=discord.ButtonStyle.secondary, custom_id='lightness:verify')
+    async def verify(self,i,b):
+        if not await self.check(i): return
+        await i.response.send_message(f"{E['verify']} Verify setup can be configured with `/verify-setup`.", ephemeral=True)
+
+class AdminView(discord.ui.View):
+    def __init__(self): super().__init__(timeout=None)
+    @discord.ui.button(label='GIVE ACCESS', style=discord.ButtonStyle.success, custom_id='lightness:give_access')
+    async def give(self,i,b):
+        if not is_owner(i.user.id): return await deny(i)
+        await i.response.send_modal(AccessModal(True))
+    @discord.ui.button(label='REMOVE ACCESS', style=discord.ButtonStyle.danger, custom_id='lightness:remove_access')
+    async def remove(self,i,b):
+        if not is_owner(i.user.id): return await deny(i)
+        await i.response.send_modal(AccessModal(False))
+    @discord.ui.button(label='ACCESS LIST', style=discord.ButtonStyle.primary, custom_id='lightness:access_list')
+    async def listing(self,i,b):
+        if not is_owner(i.user.id): return await deny(i)
+        txt='\n'.join(f'{E["arrow"]} <@{x}>' for x in sorted(ACCESS)) or 'No users added.'
+        await i.response.send_message(f'{E["crown"]} **MAIN ACCESS**\n{txt}', ephemeral=True)
+
+class AccessModal(discord.ui.Modal):
+    def __init__(self, add):
+        self.adding=add; super().__init__(title='LIGHTNESS • GIVE ACCESS' if add else 'LIGHTNESS • REMOVE ACCESS')
+        self.uid=discord.ui.TextInput(label='Discord User ID', max_length=20); self.add_item(self.uid)
+    async def on_submit(self,i):
+        if not is_owner(i.user.id): return await deny(i)
+        try: uid=int(str(self.uid.value).strip())
+        except: return await i.response.send_message(f'{E["verify"]} Invalid ID.',ephemeral=True)
+        if self.adding: ACCESS.add(uid)
+        else: ACCESS.discard(uid)
+        save_json(ACCESS_FILE, sorted(ACCESS))
+        await i.response.send_message(f'{E["diamond"]} Access {"granted" if self.adding else "removed"} for <@{uid}>.',ephemeral=True)
+
+class Bot(commands.Bot):
     def __init__(self):
-        super().__init__(
-            command_prefix="!",
-            intents=intents,
-            help_command=None
-        )
-
+        intents=discord.Intents.default(); intents.members=True; intents.guilds=True; intents.message_content=True
+        super().__init__(command_prefix='!', intents=intents, help_command=None)
     async def setup_hook(self):
+        self.add_view(MainView()); self.add_view(AdminView()); self.add_view(TicketPanelView()); self.add_view(CloseTicketView())
         await self.tree.sync()
 
-
-bot = LightnessBot()
-
-
-def is_owner(user_id: int) -> bool:
-    return user_id == OWNER_ID
-
-
-def has_main_access(user_id: int) -> bool:
-    return is_owner(user_id) or user_id in MAIN_ACCESS
-
-
-async def deny(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        "╭━━〔 <a:error:1549136020094717982> ACCESS DENIED 〕━━╮\n"
-        "┃ You don't have access to this dashboard.\n"
-        "┃ Ask the bot owner for Main Dashboard access.\n"
-        "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯",
-        ephemeral=True
-    )
-
-
-# -------------------------
-# MAIN DASHBOARD
-# -------------------------
-
-class MainDashboardView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(
-        label="ANNOUNCEMENT",
-        emoji="📢",
-        style=discord.ButtonStyle.primary,
-        custom_id="lightness:announcement"
-    )
-    async def announcement(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not has_main_access(interaction.user.id):
-            return await deny(interaction)
-        await interaction.response.send_message(
-            "📢 Announcement module opened.",
-            ephemeral=True
-        )
-
-    @discord.ui.button(
-        label="WELCOME",
-        emoji="👋",
-        style=discord.ButtonStyle.success,
-        custom_id="lightness:welcome"
-    )
-    async def welcome(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not has_main_access(interaction.user.id):
-            return await deny(interaction)
-        await interaction.response.send_message(
-            "👋 Welcome module opened.",
-            ephemeral=True
-        )
-
-    @discord.ui.button(
-        label="GOODBYE",
-        emoji="🚪",
-        style=discord.ButtonStyle.danger,
-        custom_id="lightness:goodbye"
-    )
-    async def goodbye(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not has_main_access(interaction.user.id):
-            return await deny(interaction)
-        await interaction.response.send_message(
-            "🚪 Goodbye module opened.",
-            ephemeral=True
-        )
-
-    @discord.ui.button(
-        label="TICKET",
-        emoji="🎫",
-        style=discord.ButtonStyle.secondary,
-        custom_id="lightness:ticket"
-    )
-    async def ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not has_main_access(interaction.user.id):
-            return await deny(interaction)
-        await interaction.response.send_message(
-            "🎫 Ticket module opened.",
-            ephemeral=True
-        )
-
-    @discord.ui.button(
-        label="VERIFY",
-        emoji="🛡️",
-        style=discord.ButtonStyle.secondary,
-        custom_id="lightness:verify"
-    )
-    async def verify(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not has_main_access(interaction.user.id):
-            return await deny(interaction)
-        await interaction.response.send_message(
-            "🛡️ Verify module opened.",
-            ephemeral=True
-        )
-
-
-# -------------------------
-# ADMIN DASHBOARD
-# -------------------------
-
-class AdminDashboardView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(
-        label="GIVE MAIN ACCESS",
-        emoji="➕",
-        style=discord.ButtonStyle.success,
-        custom_id="lightness:give_access"
-    )
-    async def give_access(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_owner(interaction.user.id):
-            return await deny(interaction)
-        await interaction.response.send_modal(GiveAccessModal())
-
-    @discord.ui.button(
-        label="REMOVE ACCESS",
-        emoji="➖",
-        style=discord.ButtonStyle.danger,
-        custom_id="lightness:remove_access"
-    )
-    async def remove_access(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_owner(interaction.user.id):
-            return await deny(interaction)
-        await interaction.response.send_modal(RemoveAccessModal())
-
-    @discord.ui.button(
-        label="ACCESS LIST",
-        emoji="📋",
-        style=discord.ButtonStyle.primary,
-        custom_id="lightness:access_list"
-    )
-    async def access_list(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not is_owner(interaction.user.id):
-            return await deny(interaction)
-
-        if not MAIN_ACCESS:
-            text = "No users currently have Main Dashboard access."
-        else:
-            text = "\n".join(f"• <@{uid}> (`{uid}`)" for uid in sorted(MAIN_ACCESS))
-
-        embed = discord.Embed(
-            title="🔐 MAIN DASHBOARD ACCESS LIST",
-            description=text,
-            color=discord.Color.blurple()
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-class GiveAccessModal(discord.ui.Modal, title="Give Main Dashboard Access"):
-    user_id = discord.ui.TextInput(
-        label="Discord User ID",
-        placeholder="Example: 123456789012345678",
-        required=True,
-        max_length=20
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        if not is_owner(interaction.user.id):
-            return await deny(interaction)
-
-        try:
-            uid = int(str(self.user_id).strip())
-        except ValueError:
-            return await interaction.response.send_message(
-                "❌ Invalid Discord User ID.",
-                ephemeral=True
-            )
-
-        if uid == OWNER_ID:
-            return await interaction.response.send_message(
-                "👑 Owner already has full access.",
-                ephemeral=True
-            )
-
-        MAIN_ACCESS.add(uid)
-        save_access(MAIN_ACCESS)
-
-        await interaction.response.send_message(
-            f"✅ <@{uid}> can now use the **Main Dashboard**.\n"
-            f"🔒 Admin Dashboard access was NOT granted.",
-            ephemeral=True
-        )
-
-
-class RemoveAccessModal(discord.ui.Modal, title="Remove Main Dashboard Access"):
-    user_id = discord.ui.TextInput(
-        label="Discord User ID",
-        placeholder="Example: 123456789012345678",
-        required=True,
-        max_length=20
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        if not is_owner(interaction.user.id):
-            return await deny(interaction)
-
-        try:
-            uid = int(str(self.user_id).strip())
-        except ValueError:
-            return await interaction.response.send_message(
-                "❌ Invalid Discord User ID.",
-                ephemeral=True
-            )
-
-        MAIN_ACCESS.discard(uid)
-        save_access(MAIN_ACCESS)
-
-        await interaction.response.send_message(
-            f"✅ Main Dashboard access removed from <@{uid}>.",
-            ephemeral=True
-        )
-
-
-
-# -------------------------
-# OP COMMAND
-# -------------------------
-# Use the custom LIGHTNESS emojis already configured in the bot.
-OP_EMOJIS = [
-    "<a:BS_crown:1549137817341268058>",
-    "<a:INFAMOUS_Verify:1549136346902175754>",
-    "<a:Arrow_White:1549136782971379712>",
-    "<a:Fire:1549138871537639507>",
-    "<a:diomond:1549139140803563644>",
-    "<a:bot:1549139254712606830>",
-    "<a:hammer_time:1549138507539288126>",
-    "<a:asskick:1549138352618471434>",
-    "<a:DOT:1544406593351844012>",
-    "<a:dot:1549136875283816608>",
-    "<a:CH_IconLoading:1549136416250921060>",
-    "<a:CH_Butterfly:1549136722686644336>",
-    "<a:brat_dence:1549138072694689943>",
-]
-
-
-def make_op_text(raw: str) -> str:
-    """Turn plain input into a compact LIGHTNESS-style OP post.
-
-    Keeps line breaks/bullets supplied by the user, while decorating each
-    meaningful line with a different shuffled custom emoji. The emoji pool is
-    reshuffled on every call so consecutive posts look different.
-    """
-    lines = [line.strip() for line in raw.splitlines() if line.strip()]
-    if not lines:
-        return ""
-
-    pool = OP_EMOJIS[:]
-    random.shuffle(pool)
-    while len(pool) < len(lines):
-        extra = OP_EMOJIS[:]
-        random.shuffle(extra)
-        pool.extend(extra)
-
-    title_words = {"giveaway", "admin", "pack", "package", "sale", "stock", "rules", "payment"}
-    formatted = []
-    for i, line in enumerate(lines):
-        emoji = pool[i]
-        clean = line.strip()
-        # Preserve an existing list marker, but don't stack another one on it.
-        if clean.startswith(("- ", "• ", "➜ ", "→ ")):
-            clean = clean[2:].strip()
-        if i == 0 or any(w in clean.lower() for w in title_words):
-            formatted.append(f"{emoji} **{clean.upper()}**")
-        else:
-            formatted.append(f"{emoji} **{clean}**")
-
-    return "\n".join(formatted)
-
-
-class OPView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)
-
-    @discord.ui.button(label="MESSAGE / TEST", style=discord.ButtonStyle.primary)
-    async def message(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not has_main_access(interaction.user.id):
-            return await deny(interaction)
-        await interaction.response.send_modal(OPMessageModal())
-
-    @discord.ui.button(label="IMAGE", style=discord.ButtonStyle.secondary)
-    async def image(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not has_main_access(interaction.user.id):
-            return await deny(interaction)
-        await interaction.response.send_modal(OPImageModal())
-
-
-class OPMessageModal(discord.ui.Modal, title="LIGHTNESS • OP TEST"):
-    text = discord.ui.TextInput(
-        label="TEST / MESSAGE",
-        placeholder="Sirf apna normal message likho...",
-        style=discord.TextStyle.paragraph,
-        required=True,
-        max_length=4000,
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        formatted = make_op_text(str(self.text.value))
-        if not formatted:
-            return await interaction.response.send_message("Message empty hai.", ephemeral=True)
-
-        # Send the generated OP post automatically into the same channel where
-        # /op was opened, instead of leaving only an ephemeral preview.
-        await interaction.response.defer(ephemeral=True)
-        try:
-            await interaction.channel.send(formatted, allowed_mentions=discord.AllowedMentions.none())
-            await interaction.followup.send(
-                f"<a:INFAMOUS_Verify:1549136346902175754> **OP TEST SENT**\n"
-                f"<a:diomond:1549139140803563644> Har post me emoji combination automatically shuffle hota hai.",
-                ephemeral=True,
-            )
-        except discord.Forbidden:
-            await interaction.followup.send(
-                "Bot ke paas is channel me message send karne ki permission nahi hai.",
-                ephemeral=True,
-            )
-
-
-class OPImageModal(discord.ui.Modal, title="LIGHTNESS • OP IMAGE"):
-    image_url = discord.ui.TextInput(label="Image URL", placeholder="https://...", required=True)
-    caption = discord.ui.TextInput(label="Caption / Test", required=False, max_length=1000)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        caption = str(self.caption.value).strip()
-        embed = discord.Embed(
-            description=make_op_text(caption) if caption else None,
-            color=discord.Color.dark_purple(),
-        )
-        embed.set_image(url=str(self.image_url.value).strip())
-        await interaction.response.defer(ephemeral=True)
-        try:
-            await interaction.channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
-            await interaction.followup.send(
-                "<a:INFAMOUS_Verify:1549136346902175754> **OP IMAGE SENT**",
-                ephemeral=True,
-            )
-        except discord.Forbidden:
-            await interaction.followup.send(
-                "Bot ke paas is channel me message send karne ki permission nahi hai.",
-                ephemeral=True,
-            )
-
-
-@bot.tree.command(name="op", description="Open the LIGHTNESS OP maker")
-async def op(interaction: discord.Interaction):
-    if not has_main_access(interaction.user.id):
-        return await deny(interaction)
-
-    embed = discord.Embed(
-        title="<a:BS_crown:1549137817341268058> 𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 • 𝐎𝐏 𝐌𝐀𝐊𝐄𝐑",
-        description=(
-            "<a:INFAMOUS_Verify:1549136346902175754> **𝐓𝐄𝐒𝐓 / 𝐌𝐄𝐒𝐒𝐀𝐆𝐄**\n"
-            "Sirf normal text dalo. Bot khud usko LIGHTNESS OP style me convert karke isi channel me bhejega.\n\n"
-            "<a:Arrow_White:1549136782971379712> **𝐄𝐌𝐎𝐉𝐈 𝐌𝐎𝐃𝐄**\n"
-            "Har post me custom LIGHTNESS Nitro emojis ka order automatically alag hoga.\n\n"
-            "<a:diomond:1549139140803563644> **𝐈𝐌𝐀𝐆𝐄**\n"
-            "Image + optional caption ko bhi OP style me post karo."
-        ),
-        color=discord.Color.dark_purple(),
-    )
-    await interaction.response.send_message(embed=embed, view=OPView(), ephemeral=True)
-
-# -------------------------
-# COMMANDS
-# -------------------------
-
-@bot.tree.command(name="dashboard", description="Open the LIGHTNESS Main Dashboard")
-async def dashboard(interaction: discord.Interaction):
-    if not has_main_access(interaction.user.id):
-        return await deny(interaction)
-
-    embed = discord.Embed(
-        title="🏠 LIGHTNESS — MAIN DASHBOARD",
-        description=(
-            "Select a module below.\n\n"
-            "🔒 Only approved users can use this dashboard."
-        ),
-        color=discord.Color.blurple()
-    )
-    await interaction.response.send_message(
-        embed=embed,
-        view=MainDashboardView(),
-        ephemeral=True
-    )
-
-
-@bot.tree.command(name="admin-dashboard", description="Open the Owner-only Admin Dashboard")
-async def admin_dashboard(interaction: discord.Interaction):
-    if not is_owner(interaction.user.id):
-        return await deny(interaction)
-
-    embed = discord.Embed(
-        title="👑 LIGHTNESS — ADMIN DASHBOARD",
-        description=(
-            "🔐 **OWNER ONLY**\n\n"
-            "➕ Give Main Dashboard access\n"
-            "➖ Remove Main Dashboard access\n"
-            "📋 View access list\n\n"
-            "⚠️ Main Dashboard access NEVER grants Admin Dashboard access."
-        ),
-        color=discord.Color.gold()
-    )
-    await interaction.response.send_message(
-        embed=embed,
-        view=AdminDashboardView(),
-        ephemeral=True
-    )
-
+bot=Bot()
+
+@bot.tree.command(name='dashboard', description='Open the LIGHTNESS Main Dashboard')
+async def dashboard(i):
+    if not can_dashboard(i.user.id): return await deny(i)
+    em=discord.Embed(title=f'{E["crown"]} 𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 • 𝐌𝐀𝐈𝐍 𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 {E["crown"]}', description=f'{E["diamond"]} Select a module below to configure your server.\n\n{E["verify"]} Premium LIGHTNESS controls', color=discord.Color.blurple())
+    await i.response.send_message(embed=em,view=MainView(),ephemeral=True)
+
+@bot.tree.command(name='admin-dashboard', description='Owner-only access dashboard')
+async def admin_dashboard(i):
+    if not is_owner(i.user.id): return await deny(i)
+    em=discord.Embed(title=f'{E["crown"]} 𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 • 𝐀𝐃𝐌𝐈𝐍 {E["crown"]}', description=f'{E["verify"]} Owner only\n\n{E["diamond"]} Manage Main Dashboard access.', color=discord.Color.gold())
+    await i.response.send_message(embed=em,view=AdminView(),ephemeral=True)
+
+@bot.tree.command(name='op', description='Open LIGHTNESS OP Maker')
+async def op(i):
+    if not can_dashboard(i.user.id): return await deny(i)
+    await i.response.send_message(f'{E["crown"]} **LIGHTNESS • OP MAKER**\n{E["diamond"]} Use `/op-message` or `/op-image`.',ephemeral=True)
+
+@bot.tree.command(name='op-message', description='Create a formatted LIGHTNESS OP message')
+@app_commands.describe(text='Your raw text')
+async def op_message(i,text:str):
+    if not can_dashboard(i.user.id): return await deny(i)
+    emojis=list(E.values()); random.shuffle(emojis)
+    lines=[x.strip() for x in text.splitlines() if x.strip()] or [text]
+    out=f'{emojis[0]} **𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 • 𝐎𝐏** {emojis[1]}\n\n'
+    for n,line in enumerate(lines): out += f'{emojis[(n+2)%len(emojis)]} **{line}**\n'
+    out += f'\n{emojis[-1]} **𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 𝐎𝐅𝐅𝐈𝐂𝐈𝐀𝐋**'
+    chunks=[out[i:i+1900] for i in range(0,len(out),1900)]
+    for c in chunks: await i.channel.send(c)
+    await i.response.send_message(f'{E["star"]} OP sent.',ephemeral=True)
+
+@bot.tree.command(name='op-image', description='Create an OP image post')
+@app_commands.describe(image_url='Direct image URL', caption='Optional caption')
+async def op_image(i,image_url:str,caption:str=''):
+    if not can_dashboard(i.user.id): return await deny(i)
+    em=discord.Embed(title=f'{E["crown"]} 𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 • 𝐎𝐏 {E["crown"]}', description=(f'{E["fire"]} {caption}' if caption else f'{E["diamond"]} 𝐎𝐏 𝐈𝐌𝐀𝐆𝐄'), color=discord.Color.blurple())
+    em.set_image(url=image_url); em.set_footer(text='LIGHTNESS OFFICIAL')
+    await i.channel.send(embed=em); await i.response.send_message(f'{E["star"]} Image OP sent.',ephemeral=True)
 
 @bot.event
-async def on_ready():
-    print(f"LIGHTNESS online as {bot.user} ({bot.user.id})")
+async def on_member_join(member):
+    cfg=guild_cfg(member.guild.id)['welcome']; cid=cfg.get('channel_id')
+    if not cid: return
+    ch=member.guild.get_channel(int(cid))
+    if ch:
+        msg=cfg.get('message') or f'{E["crown"]} Welcome {member.mention} to **{member.guild.name}**! {E["diamond"]}'
+        await ch.send(msg.replace('{user}',member.mention).replace('{server}',member.guild.name).replace('{member_count}',str(member.guild.member_count)))
 
+@bot.event
+async def on_member_remove(member):
+    cfg=guild_cfg(member.guild.id)['goodbye']; cid=cfg.get('channel_id')
+    if not cid: return
+    ch=member.guild.get_channel(int(cid))
+    if ch:
+        msg=cfg.get('message') or f'{E["fire"]} {member.mention} has left **{member.guild.name}**. {E["diamond"]}'
+        await ch.send(msg.replace('{user}',member.mention).replace('{server}',member.guild.name).replace('{member_count}',str(member.guild.member_count)))
 
-if BOT_TOKEN == "PUT_YOUR_BOT_TOKEN_HERE":
-    print("WARNING: Set DISCORD_TOKEN in Railway Variables or replace BOT_TOKEN.")
-else:
-    bot.run(BOT_TOKEN)
+@bot.event
+async def on_ready(): print(f'LIGHTNESS online as {bot.user} ({bot.user.id})')
+
+if BOT_TOKEN == 'PUT_YOUR_BOT_TOKEN_HERE': print('Set DISCORD_TOKEN in Railway Variables.')
+else: bot.run(BOT_TOKEN)
