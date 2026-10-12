@@ -23,7 +23,7 @@ DATA.setdefault('users', [])
 DATA.setdefault('roles', [])
 DATA.setdefault('verify_role', 0)
 DATA.setdefault('announcement', {'title':'', 'description':'', 'image':'', 'channel':DEFAULT_ANNOUNCEMENT_CHANNEL})
-DATA.setdefault('welcome', {'enabled':False,'channel':0,'title':'🩸 𝐈𝐍𝐃𝐈𝐀𝐍 𝐁𝐋𝐎𝐎𝐃 𝐌𝐎𝐎𝐍 𝐒𝟏 🩸','description':'<a:BS_crown:1549137817341268058> **𝐖𝐄𝐋𝐂𝐎𝐌𝐄 {user_mention}!**\n<a:Fire:1549138871537639507> **𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 {server_name}**','image':''})
+DATA.setdefault('welcome', {'enabled':False,'channel':0,'ping_channel':0,'title':'🩸 𝐈𝐍𝐃𝐈𝐀𝐍 𝐁𝐋𝐎𝐎𝐃 𝐌𝐎𝐎𝐍 𝐒𝟏 🩸','description':'<a:BS_crown:1549137817341268058> **𝐖𝐄𝐋𝐂𝐎𝐌𝐄 {user_mention}!**\n<a:Fire:1549138871537639507> **𝐖𝐄𝐋𝐂𝐎𝐌𝐄 𝐓𝐎 {server_name}**','image':''})
 DATA.setdefault('goodbye', {'enabled':False,'channel':0,'title':'𝐆𝐎𝐎𝐃𝐁𝐘𝐄 {user_name}','description':'<a:Fire:1549138871537639507> **𝐖𝐄\'𝐋𝐋 𝐌𝐈𝐒𝐒 𝐘𝐎𝐔!**\n<a:Arrow_White:1549136782971379712> **𝐌𝐄𝐌𝐁𝐄𝐑𝐒 𝐋𝐄𝐅𝐓:** {member_count}','image':''})
 DATA.setdefault('ticket', {'enabled':False,'channel':0,'category':0,'title':'🎫 𝐓𝐈𝐂𝐊𝐄𝐓 𝐒𝐔𝐏𝐏𝐎𝐑𝐓','description':'Open a ticket using the buttons below.','image':'','buttons':[{'label':'BUY','emoji':'🎫','style':'green'},{'label':'REPORT','emoji':'⚠️','style':'red'},{'label':'SUPPORT','emoji':'🛠️','style':'blue'}]})
 DATA.setdefault('op', {'title':'𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 • 𝐎𝐏','message':'','image':'','footer':'𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 𝐎𝐅𝐅𝐈𝐂𝐈𝐀𝐋'})
@@ -88,9 +88,9 @@ def op_decorate(text):
             out.append(f'{em} **{line}**')
     return '\n'.join(out)
 
-def make_op_embed(message, image='', footer='𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 𝐎𝐅𝐅𝐈𝐂𝐈𝐀𝐋', op_title='𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 • 𝐎𝐏'):
+def make_op_embed(message, image='', footer='𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 𝐎𝐅𝐅𝐈𝐂𝐈𝐀𝐋'):
     body=op_decorate(message)
-    emb=discord.Embed(title=f'{OP_EMOJIS[6]} **{op_title}** {OP_EMOJIS[6]}', description=body, color=discord.Color.from_rgb(110,70,220))
+    emb=discord.Embed(title=f'{OP_EMOJIS[6]} **𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 • 𝐎𝐏** {OP_EMOJIS[6]}', description=body, color=discord.Color.from_rgb(110,70,220))
     if image:
         emb.set_image(url=image)
     if footer:
@@ -98,14 +98,13 @@ def make_op_embed(message, image='', footer='𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒�
     return emb
 
 class OPEditModal(discord.ui.Modal, title='LIGHTNESS — Edit OP'):
-    op_title=discord.ui.TextInput(label='OP Title', max_length=80, required=True)
     message=discord.ui.TextInput(label='OP Message / Test', style=discord.TextStyle.paragraph, max_length=4000, required=True)
     image=discord.ui.TextInput(label='Image/GIF URL (optional)', max_length=1000, required=False)
     footer=discord.ui.TextInput(label='Footer (optional)', max_length=200, required=False)
     async def on_submit(self,i):
         if not allowed(i.user.id,i):
             return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**', ephemeral=True)
-        DATA['op'].update(op_title=str(self.op_title.value), message=str(self.message.value), image=str(self.image.value), footer=str(self.footer.value) or '𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 𝐎𝐅𝐅𝐈𝐂𝐈𝐀𝐋')
+        DATA['op'].update(message=str(self.message.value), image=str(self.image.value), footer=str(self.footer.value) or '𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 𝐎𝐅𝐅𝐈𝐂𝐈𝐀𝐋')
         save()
         await i.response.send_message(f'{VERIFY} **𝐎𝐏 𝐒𝐀𝐕𝐄𝐃**', ephemeral=True)
 
@@ -114,7 +113,7 @@ class OPDashboard(discord.ui.View):
     @discord.ui.button(label='EDIT', style=discord.ButtonStyle.primary)
     async def edit(self,i,b):
         if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
-        c=DATA['op']; m=OPEditModal(); m.op_title.default=c.get('op_title','𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 • 𝐎𝐏'); m.message.default=c.get('message',''); m.image.default=c.get('image',''); m.footer.default=c.get('footer','𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 𝐎𝐅𝐅𝐈𝐂𝐈𝐀𝐋'); await i.response.send_modal(m)
+        c=DATA['op']; m=OPEditModal(); m.message.default=c.get('message',''); m.image.default=c.get('image',''); m.footer.default=c.get('footer','𝐋𝐈𝐆𝐇𝐓𝐍𝐄𝐒𝐒 𝐎𝐅𝐅𝐈𝐂𝐈𝐀𝐋'); await i.response.send_modal(m)
     @discord.ui.button(label='TEST', style=discord.ButtonStyle.secondary)
     async def test(self,i,b):
         if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
@@ -167,13 +166,22 @@ class SimpleModuleModal(discord.ui.Modal):
         cfg=DATA[module]
         self.title_input=discord.ui.TextInput(label='Title',max_length=256,required=False,default=cfg.get('title',''))
         self.desc_input=discord.ui.TextInput(label='Message',style=discord.TextStyle.paragraph,max_length=4000,required=False,default=cfg.get('description',''))
-        self.channel_input=discord.ui.TextInput(label='Channel ID',max_length=25,required=False,default=str(cfg.get('channel',0)))
+        self.channel_input=discord.ui.TextInput(label='Welcome Channel ID' if module=='welcome' else 'Channel ID',max_length=25,required=False,default=str(cfg.get('channel',0)))
         self.image_input=discord.ui.TextInput(label='Image/GIF URL',max_length=1000,required=False,default=cfg.get('image',''))
+        self.ping_channel_input=None
         self.add_item(self.title_input); self.add_item(self.desc_input); self.add_item(self.channel_input); self.add_item(self.image_input)
+        if module == 'welcome':
+            self.ping_channel_input=discord.ui.TextInput(label='Separate Ping Channel ID',max_length=25,required=False,default=str(cfg.get('ping_channel',0)))
+            self.add_item(self.ping_channel_input)
     async def on_submit(self,i):
         if not allowed(i.user.id,i): return await i.response.send_message(f'{ERROR} **𝐃𝐀𝐒𝐇𝐁𝐎𝐀𝐑𝐃 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃**',ephemeral=True)
-        cfg=DATA[self.module]; ch=str(self.channel_input.value).strip(); cfg.update(title=str(self.title_input.value),description=str(self.desc_input.value),image=str(self.image_input.value),channel=int(ch) if ch.isdigit() else cfg.get('channel',0)); save()
-        await i.response.send_message(f'{VERIFY} **{self.module.upper()} SAVED**',ephemeral=True)
+        cfg=DATA[self.module]; ch=str(self.channel_input.value).strip()
+        cfg.update(title=str(self.title_input.value),description=str(self.desc_input.value),image=str(self.image_input.value),channel=int(ch) if ch.isdigit() else cfg.get('channel',0))
+        if self.module == 'welcome' and self.ping_channel_input is not None:
+            ping_ch=str(self.ping_channel_input.value).strip()
+            cfg['ping_channel']=int(ping_ch) if ping_ch.isdigit() else cfg.get('ping_channel',0)
+        save()
+        await i.response.send_message(f'{VERIFY} **{self.module.upper()} SAVED**' + ('\nWelcome message and 15-second join ping use separate channels.' if self.module=='welcome' else ''),ephemeral=True)
 
 class ModuleView(discord.ui.View):
     def __init__(self,module): super().__init__(timeout=300); self.module=module
@@ -426,6 +434,17 @@ async def on_member_join(member):
     if ch:
         try: await ch.send(embed=make_embed(c,member,member.guild))
         except Exception as ex: print('Welcome error:',ex)
+    # Optional separate join-ping channel; the mention message deletes after 15 seconds.
+    ping_channel_id=c.get('ping_channel',0)
+    ping_ch=member.guild.get_channel(int(ping_channel_id)) if ping_channel_id else None
+    if ping_ch:
+        try:
+            await ping_ch.send(
+                f'{member.mention} joined the server!',
+                delete_after=15,
+                allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False)
+            )
+        except Exception as ex: print('Welcome ping error:',ex)
 
 @bot.event
 async def on_member_remove(member):

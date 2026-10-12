@@ -19,3 +19,9 @@ LIGHTNESS — Railway setup
 Only MASTER_ID can manage access and verification setup.
 Announcement EDIT opens a modal with title, description, image/GIF URL and channel ID.
  /say accepts an optional image/GIF upload.
+
+Welcome feature update:
+- In /dashboard -> WELCOME -> EDIT, set Welcome Channel ID and Separate Ping Channel ID.
+- The welcome embed stays in the configured welcome channel.
+- The member mention is posted in the separate ping channel and automatically deletes after 15 seconds.
+- Ensure the bot can View Channel, Send Messages, Embed Links in the welcome channel, and View Channel/Send Messages in the ping channel.
